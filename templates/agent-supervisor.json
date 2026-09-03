@@ -1,0 +1,19 @@
+{
+  "//": "Per-project config for claude-plan-runner. Lives at <project>/.claude/agent-supervisor.json. Paths relative to the project root.",
+  "planFile": "PLAN.md",
+  "contextFiles": [],
+  "handoffDir": "handoff",
+  "workflowName": "execute-phased-plan",
+  "devServer": {
+    "port": 5200,
+    "command": ["npx", "vite", "--port", "5200", "--strictPort"]
+  },
+  "tests": ["npm test"],
+  "testsTakeBase": false,
+  "visualUrl": "/",
+  "model": "opus",
+  "maxUtil": 0.9,
+  "maxUnreadable": 3,
+  "groomBatch": 4,
+  "portBase": 5301
+}
