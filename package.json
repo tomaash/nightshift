@@ -1,0 +1,12 @@
+{
+  "name": "claude-plan-runner",
+  "version": "0.1.0",
+  "description": "Run a phased plan to completion with Claude Code agents — unattended, across usage-limit resets, until the backlog is dry",
+  "type": "module",
+  "bin": { "claude-plan-runner": "bin/cli.mjs" },
+  "files": ["bin", "workflows", "templates", "install.sh", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "keywords": ["claude-code", "agents", "workflow", "orchestration", "autonomous"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/tomaash/claude-plan-runner" }
+}

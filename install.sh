@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # Install claude-plan-runner into a project.
-#   ./install.sh /path/to/project [--copy]
-# Links (or copies, with --copy) the workflow into <project>/.claude/workflows/ — the
+#   ./install.sh /path/to/project [--link]   (copies by default; --link symlinks for toolkit development)
+# Copies (or symlinks, with --link) the workflow into <project>/.claude/workflows/ — the
 # harness resolves named workflows per project only — writes a config template if the
-# project has none, and gitignores the supervisor's runtime files.
+# project has none, and gitignores the supervisor's runtime files. Prefer `npx claude-plan-runner init`.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PROJECT="${1:?usage: install.sh <project-dir> [--copy]}"
-MODE="${2:-link}"
+PROJECT="${1:?usage: install.sh <project-dir> [--link]}"
+MODE="${2:-copy}"
 PROJECT="$(cd "$PROJECT" && pwd)"
 
 mkdir -p "$PROJECT/.claude/workflows"
 for wf in "$HERE"/workflows/*.js; do
   name="$(basename "$wf")"
   target="$PROJECT/.claude/workflows/$name"
-  if [ "$MODE" = "--copy" ]; then cp "$wf" "$target"; echo "copied  $target"
-  else ln -sfn "$wf" "$target"; echo "linked  $target -> $wf"; fi
+  if [ "$MODE" = "--link" ]; then ln -sfn "$wf" "$target"; echo "linked  $target -> $wf"
+  else cp "$wf" "$target"; echo "copied  $target"; fi
 done
 
 CFG="$PROJECT/.claude/agent-supervisor.json"

@@ -1,0 +1,11 @@
+{
+  "name": "claude-plan-runner",
+  "version": "0.1.0",
+  "description": "Run a phased plan to completion with Claude Code agents — unattended, across usage-limit resets, until the backlog is dry. Provides the execute-phased-plan workflow and the /plan-runner onboarding skill.",
+  "author": { "name": "Tomas Holas" },
+  "homepage": "https://github.com/tomaash/claude-plan-runner",
+  "repository": "https://github.com/tomaash/claude-plan-runner",
+  "license": "MIT",
+  "keywords": ["workflow", "agents", "orchestration", "autonomous", "plan", "worktree"],
+  "workflows": "./workflows/"
+}

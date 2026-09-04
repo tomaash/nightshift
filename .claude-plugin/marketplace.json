@@ -1,0 +1,11 @@
+{
+  "name": "tomaash",
+  "owner": { "name": "Tomas Holas" },
+  "plugins": [
+    {
+      "name": "claude-plan-runner",
+      "source": "./",
+      "description": "Run a phased plan to completion with Claude Code agents — unattended, across usage-limit resets, until the backlog is dry."
+    }
+  ]
+}
