@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * claude-plan-runner — the supervisor. Runs a project's plan until the backlog
- * is dry, surviving usage-limit resets. Lives OUTSIDE any Claude session (run
- * it under tmux): the one thing the account limit cannot kill is a plain loop.
+ * nightshift — the supervisor. Runs a project's plan until the backlog is dry,
+ * surviving usage-limit resets. Lives OUTSIDE any Claude session (`nightshift
+ * run` puts it in tmux): the one thing the account limit cannot kill is a plain loop.
  *
- *   node <toolkit>/bin/agent-supervisor.mjs [--repo <project>]   # default: cwd
- *   touch <project>/<handoffDir>/STOP                             # graceful stop
+ *   node <toolkit>/bin/supervisor.mjs [--repo <project>]   # default: cwd
+ *   touch <project>/<handoffDir>/STOP                       # graceful stop
  *
- * Config: <project>/.claude/agent-supervisor.json (see templates/). The
- * workflow it drives must be installed at <project>/.claude/workflows/ —
- * install.sh does that (the harness resolves named workflows per project only).
+ * Config: <project>/.claude/nightshift.json (see templates/). The `shift`
+ * workflow it drives comes from the nightshift plugin (`nightshift:shift`) or
+ * is copied into <project>/.claude/workflows/ by `nightshift install`.
  *
- * One iteration = one unit of work = one headless `claude -p` call:
+ * One iteration = one shift = one headless `claude -p` call:
  *   phases — run the workflow for the phases in <handoffDir>/STATE.json
  *   groom  — no phases left: turn handoff flags + critic notes into new plan
  *            phases (batched), or declare the backlog dry
@@ -19,14 +19,14 @@
  *
  * Budget: every `claude -p` stream carries `rate_limit_event` records with
  * rate_limit_info.unifiedWindows.{five_hour,seven_day}.{utilization,resetsAt}.
- * Before each unit a one-line haiku probe reads them; a window at or above
- * maxUtil sleeps to its resetsAt (+3 min). A unit killed by the limit anyway
+ * Before each shift a one-line haiku probe reads them; a window at or above
+ * maxUtil sleeps to its resetsAt (+3 min). A shift killed by the limit anyway
  * uses the last rate_limit_info from its stream; the error text ("resets 4pm")
  * is the fallback, then 60 min. Nothing is lost: the workflow's agents commit
  * and write handoffs at milestones (crash-only contract).
  *
- * Stops ONLY for: STOP file; backlog dry; a hard blocker (maxUnreadable units
- * in a row without a readable state block; a repo the repair unit could not
+ * Stops ONLY for: STOP file; backlog dry; a hard blocker (maxUnreadable shifts
+ * in a row without a readable state block; a repo the repair shift could not
  * fix). No approval gates — every merge is a commit and commits revert.
  */
 import { spawn, spawnSync } from 'node:child_process'
@@ -37,14 +37,14 @@ import net from 'node:net'
 const argv = process.argv.slice(2)
 const opt = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : d }
 const REPO = resolve(opt('--repo', process.cwd()))
-const CONFIG_FILE = resolve(REPO, '.claude/agent-supervisor.json')
-if (!existsSync(CONFIG_FILE)) { console.error(`no ${CONFIG_FILE} — run install.sh first`); process.exit(2) }
+const CONFIG_FILE = resolve(REPO, '.claude/nightshift.json')
+if (!existsSync(CONFIG_FILE)) { console.error(`no ${CONFIG_FILE} — run: nightshift install`); process.exit(2) }
 const C = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'))
 
 const HANDOFF = resolve(REPO, C.handoffDir || 'handoff')
 const STATE_FILE = resolve(HANDOFF, 'STATE.json')
 const STOP_FILE = resolve(HANDOFF, 'STOP')
-const LOG_FILE = resolve(HANDOFF, 'supervisor.log')
+const LOG_FILE = resolve(HANDOFF, 'nightshift.log')
 const PLAN = C.planFile
 const DEV_PORT = C.devServer?.port || 5200
 const DEV_CMD = C.devServer?.command || null
@@ -52,7 +52,7 @@ const MAIN_BASE = `http://localhost:${DEV_PORT}`
 const MODEL = process.env.SUPERVISOR_MODEL || C.model || 'opus'
 const MAX_UTIL = Number(process.env.SUPERVISOR_MAX_UTIL || C.maxUtil || 0.9)
 const MAX_UNREADABLE = C.maxUnreadable || 3
-const WORKFLOW = C.workflowName || 'execute-phased-plan'
+const WORKFLOW = C.workflowName || 'shift'
 const TESTS = C.tests || []
 const TESTS_TAKE_BASE = C.testsTakeBase !== false
 const VISUAL = C.visualUrl || '/'
@@ -93,7 +93,7 @@ const phasesPrompt = (cw) => `use a workflow. In ${REPO}, run the saved workflow
 
 const groomPrompt = (previous) => `You are the backlog groomer for ${REPO}. The phases listed in ${PLAN} have all been merged (see git log, ${C.handoffDir || 'handoff'}/*.md, and any "Run" sections and critic notes in the plan). Decide what work remains:
 1. Read every handoff's flags and the latest critic output. Classify each as (a) a real defect or unfinished plan item a coding agent can complete with the evidence in the plan, (b) needs a human/product decision or an external resource (credentials, a dead URL, hardware), (c) noise or a documented decision.
-2. For (a): append new phase sections to ${PLAN} in the plan's existing format (Implement / Verification / Do not), each with evidence citations, and build a continueWith object for the ${WORKFLOW} workflow: ${JSON.stringify({ ...baseArgs(), serial: ['ids that touch the same files, in order'], parallel: ['independent ids'], phases: { id: { title: '…', port: PORT_BASE, brief: 'facts, fixture ids, prior findings' } } })}. Ports: ${PORT_BASE} upward, unique per phase. At most ${BATCH} phases per unit.
+2. For (a): append new phase sections to ${PLAN} in the plan's existing format (Implement / Verification / Do not), each with evidence citations, and build a continueWith object for the ${WORKFLOW} workflow: ${JSON.stringify({ ...baseArgs(), serial: ['ids that touch the same files, in order'], parallel: ['independent ids'], phases: { id: { title: '…', port: PORT_BASE, brief: 'facts, fixture ids, prior findings' } } })}. Ports: ${PORT_BASE} upward, unique per phase. At most ${BATCH} phases per shift.
 3. For (b) and (c): record them in a "Backlog — needs a human" list in ${PLAN} with one-line dispositions. Do not invent work; if nothing actionable remains, the backlog is dry.
 Commit the plan change on main ("Groom: <n> new phases" or "Groom: backlog dry"). Previous state for context: ${JSON.stringify(previous).slice(0, 4000)}${POLICY}`
 
@@ -157,7 +157,7 @@ const repoBroken = () => {
 // --- the loop ---------------------------------------------------------------------------------------
 
 const main = async () => {
-  log(`supervisor start in ${REPO} (plan ${PLAN}, workflow ${WORKFLOW}, model ${MODEL}, maxUtil ${MAX_UTIL})`)
+  log(`nightshift start in ${REPO} (plan ${PLAN}, workflow ${WORKFLOW}, model ${MODEL}, maxUtil ${MAX_UTIL})`)
   for (;;) {
     if (existsSync(STOP_FILE)) { log('STOP file present — stopping'); break }
     const state = loadState()
@@ -176,11 +176,11 @@ const main = async () => {
 
     const broken = repoBroken()
     let kind, prompt
-    if (broken) { kind = 'repair'; prompt = repairPrompt(); log(`repo ${broken} — repair unit`) }
+    if (broken) { kind = 'repair'; prompt = repairPrompt(); log(`repo ${broken} — repair shift`) }
     else if (state.continueWith && ((state.continueWith.serial || []).length + (state.continueWith.parallel || []).length) > 0) { kind = 'phases'; prompt = phasesPrompt({ ...baseArgs(), ...state.continueWith }) }
     else { kind = 'groom'; prompt = groomPrompt(state) }
 
-    log(`unit ${state.units + 1} (${kind}) starting`)
+    log(`shift ${state.units + 1} (${kind}) starting`)
     const r = await runClaude(prompt)
 
     if (r.limitHit) {
@@ -193,11 +193,11 @@ const main = async () => {
     const next = parseState(r.finalText || '')
     if (!next) {
       state.unreadable++; state.units++
-      log(`unit ${state.units} (${kind}) returned no readable state (exit ${r.code}); unreadable=${state.unreadable}`)
+      log(`shift ${state.units} (${kind}) returned no readable state (exit ${r.code}); unreadable=${state.unreadable}`)
       state.history.push({ unit: state.units, kind, unreadable: true, exit: r.code, tail: (r.finalText || r.stderr || '').slice(-500), at: new Date().toISOString() })
       saveState(state)
-      if (state.unreadable >= MAX_UNREADABLE) { log('HARD BLOCKER: consecutive units without readable state — stopping'); break }
-      if (kind === 'repair') { log('HARD BLOCKER: repair unit failed — stopping'); break }
+      if (state.unreadable >= MAX_UNREADABLE) { log('HARD BLOCKER: consecutive shifts without readable state — stopping'); break }
+      if (kind === 'repair') { log('HARD BLOCKER: repair shift failed — stopping'); break }
       continue
     }
 
@@ -208,10 +208,10 @@ const main = async () => {
     state.done = !!next.done
     state.reason = next.reason || ''
     saveState(state)
-    log(`unit ${state.units} (${kind}) done — ${next.reason || ''}; remaining: ${remaining.join(', ') || 'none'}`)
+    log(`shift ${state.units} (${kind}) done — ${next.reason || ''}; remaining: ${remaining.join(', ') || 'none'}`)
     if (kind === 'repair' && repoBroken()) { log('HARD BLOCKER: repo still broken after repair — stopping'); break }
   }
   if (devServer) devServer.kill()
 }
 
-main().catch((e) => { log(`supervisor crashed: ${e.stack || e}`); process.exit(1) })
+main().catch((e) => { log(`nightshift crashed: ${e.stack || e}`); process.exit(1) })

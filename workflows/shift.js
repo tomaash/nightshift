@@ -1,6 +1,6 @@
 export const meta = {
-  name: 'execute-phased-plan',
-  description: 'Execute the phases of a written plan with isolated implementer agents, adversarial review, and one-at-a-time merge+verify onto main; crash-only — every phase checkpoints to disk, the run halts cleanly when agents start dying, and the return value is the continuation',
+  name: 'shift',
+  description: 'One nightshift shift: execute a batch of phases from a written plan with isolated implementer agents, adversarial review, and one-at-a-time merge+verify onto main; crash-only — every phase checkpoints to disk, the run halts cleanly when agents start dying, and the return value is the continuation',
   whenToUse: 'A plan file exists with numbered phase sections (each with Implement / Verification / Do-not) and the user has asked to run it without firing phases by hand. Pass the phase map via args — see the ARGS block below.',
   phases: [
     { title: 'Serial track', detail: 'phases that touch the same files, one after another' },
@@ -214,7 +214,7 @@ if (halted || remaining.length > 0 && results.some((r) => r.status === 'agent-di
     merged: state.merged,
     results,
     continueWith,
-    howToContinue: `After the limit resets${A.resetAt ? ` (${A.resetAt})` : ''}: Workflow({ name: 'execute-phased-plan', args: <continueWith> }). Do NOT use resumeFromRunId.`,
+    howToContinue: `After the limit resets${A.resetAt ? ` (${A.resetAt})` : ''}: Workflow({ name: 'shift' /* or 'nightshift:shift' */, args: <continueWith> }). Do NOT use resumeFromRunId.`,
   }
 }
 

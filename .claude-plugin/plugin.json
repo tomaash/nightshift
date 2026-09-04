@@ -1,11 +1,11 @@
 {
-  "name": "claude-plan-runner",
-  "version": "0.1.0",
-  "description": "Run a phased plan to completion with Claude Code agents — unattended, across usage-limit resets, until the backlog is dry. Provides the execute-phased-plan workflow and the /plan-runner onboarding skill.",
+  "name": "nightshift",
+  "version": "0.2.0",
+  "description": "Hand Claude Code a written plan and go to sleep. Runs it unattended — implementer agents in worktrees, adversarial review, one merge at a time onto main — across usage-limit resets, until the backlog is dry. Provides the `shift` workflow and the /nightshift skill (install, run).",
   "author": { "name": "Tomas Holas" },
-  "homepage": "https://github.com/tomaash/claude-plan-runner",
-  "repository": "https://github.com/tomaash/claude-plan-runner",
+  "homepage": "https://github.com/tomaash/nightshift",
+  "repository": "https://github.com/tomaash/nightshift",
   "license": "MIT",
-  "keywords": ["workflow", "agents", "orchestration", "autonomous", "plan", "worktree"],
+  "keywords": ["workflow", "agents", "orchestration", "autonomous", "unattended", "plan", "worktree"],
   "workflows": "./workflows/"
 }

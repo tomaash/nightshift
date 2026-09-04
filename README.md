@@ -1,77 +1,65 @@
-# claude-plan-runner
+# nightshift
 
-Run a written, phased plan to completion with Claude Code agents — **unattended,
-across usage-limit resets, until the backlog is dry.**
+Hand Claude Code a written plan and go to sleep.
 
-You write the plan. It runs implementer agents in isolated git worktrees, has an
-adversarial reviewer try to break each phase, merges one phase at a time onto
-`main` with the full test suite and a visual check, then grooms its own backlog
-from the flags it raised — and sleeps through your 5-hour usage window instead
-of dying in the middle of it.
+nightshift runs the plan **unattended, across usage-limit resets, until the
+backlog is dry**: implementer agents in isolated git worktrees, an adversarial
+reviewer that tries to break each phase, one merge at a time onto `main` with
+the full test suite and a visual check, then it grooms its own backlog from the
+flags it raised. When your 5-hour window fills up it sleeps to the reset and
+clocks back in.
 
 ```
-plan ──▶ [supervisor loop, outside Claude, under tmux]
+plan ──▶ [nightshift supervisor, outside Claude, in tmux]
            │  probe usage → sleep to reset if ≥ 90 %
-           │  one unit of work = one headless `claude -p` running the workflow:
+           │  one shift = one headless `claude -p` running the `shift` workflow:
            │     implement (worktree) → refute → fix → merge+verify → docs → critic
-           │  persist continueWith → repeat
+           │  persist continueWith → next shift
            │  no phases left → groom: flags + critic → new phases, or "dry"
-           └─ stop: STOP file · backlog dry · hard blocker
+           └─ clock out: STOP file · backlog dry · hard blocker
 ```
 
-## Install — two ways
+## Install, run
 
-Prerequisites: [Claude Code](https://code.claude.com) CLI signed in, `git`,
-Node ≥ 20, `tmux` (recommended). Your project must be a git repo.
+Prerequisites: [Claude Code](https://code.claude.com) signed in, `git`, Node ≥ 20,
+`tmux`. Your project must be a git repo with a plan (see below).
 
-### A. As a Claude Code plugin (recommended — one command, stays updated)
-
-Inside Claude Code:
+**Inside Claude Code** (plugin — stays updated):
 
 ```
-/plugin marketplace add tomaash/claude-plan-runner
-/plugin install claude-plan-runner@tomaash
-/plan-runner
+/plugin marketplace add tomaash/nightshift
+/plugin install nightshift@tomaash
+/nightshift install
+/nightshift run
 ```
 
-The plugin provides the workflow (`claude-plan-runner:execute-phased-plan`) and
-the `/plan-runner` skill, which writes your project's config, checks your plan,
-runs the doctor and hands you the tmux command to start the supervisor. Same
-thing non-interactively:
+**From a terminal** (no plugin — the workflow is copied into your repo):
 
 ```bash
-claude plugin marketplace add tomaash/claude-plan-runner
-claude plugin install claude-plan-runner@tomaash
+npx github:tomaash/nightshift install
+npx github:tomaash/nightshift run
 ```
 
-### B. As an npm-style CLI (no plugin; the workflow is copied into your repo)
+`install` writes `.claude/nightshift.json`, finds your plan (`PLAN.md`, or the
+single `*PLAN*.md` at the root), gitignores the runtime files and checks the
+prerequisites — including that the Workflow tool is available headless and that
+the usage signal is present. Fix any `MISS` line, glance at the config (tests,
+dev server, visual URL), then `run`.
+
+`run` starts the supervisor in a tmux session named `nightshift` and returns.
+Watch, stop, check:
 
 ```bash
-cd your-project
-npx github:tomaash/claude-plan-runner init          # copies the workflow + writes .claude/agent-supervisor.json
-npx github:tomaash/claude-plan-runner doctor        # checks claude, Workflow tool, usage signal, config
-$EDITOR .claude/agent-supervisor.json               # planFile, tests, devServer, visualUrl
-tmux new -s agent "npx github:tomaash/claude-plan-runner run"
+tail -f handoff/nightshift.log      # or: tmux attach -t nightshift
+npx github:tomaash/nightshift stop     # graceful — finishes the current shift
+npx github:tomaash/nightshift status
 ```
 
-Prefer a pinned install: `npm i -D github:tomaash/claude-plan-runner`, then
-`npx claude-plan-runner …`. Re-run `init` after upgrading (it copies).
-
-### Run, watch, stop
-
-```bash
-tail -f handoff/supervisor.log
-npx claude-plan-runner status
-npx claude-plan-runner stop        # graceful: finishes the current unit
-```
-
-With the plugin installed the same CLI lives at
-`node ~/.claude/plugins/<…>/claude-plan-runner/bin/cli.mjs` — `/plan-runner`
-prints the exact path for your machine.
+(`/nightshift stop` and `/nightshift status` do the same from inside Claude Code.)
 
 ## What you write: the plan
 
-A Markdown file (default `PLAN.md`) with one section per phase:
+A Markdown file with one section per phase:
 
 ```markdown
 ## Phase 3a — Wrapping mode
@@ -85,21 +73,22 @@ measurements). The more the plan states *what correct looks like*, the less the
 agents guess. See [`docs/PLAN-FORMAT.md`](docs/PLAN-FORMAT.md) for the full
 contract and a worked example.
 
-## What you configure: `.claude/agent-supervisor.json`
+## What you configure: `.claude/nightshift.json`
 
 | key | meaning |
 |---|---|
 | `planFile`, `contextFiles` | the plan and any files every agent must read first |
-| `devServer.command` / `.port` | how to start your dev server; the supervisor keeps it up on `main` for the merge agent; worktree agents start their own on `portBase+` |
+| `devServer.command` / `.port` | how to start your dev server; nightshift keeps it up on `main` for the merge agent; worktree agents start their own on `portBase+` |
 | `tests`, `testsTakeBase` | the suites the merge agent runs on `main`; `--base http://localhost:<port>` is appended when `testsTakeBase` |
-| `buildCommand` | used to detect an unbuildable `main` (triggers a repair unit) |
+| `buildCommand` | used to detect an unbuildable `main` (triggers a repair shift) |
 | `visualUrl` | the page every phase must look at before it is done |
 | `docs` | an optional docs phase run on `main` after each batch |
 | `model`, `maxUtil`, `groomBatch`, `maxUnreadable` | Opus by default; sleep threshold; phases per groom; hard-blocker threshold |
+| `workflowName` | `shift` (copied) or `nightshift:shift` (plugin) — `install` sets it |
 
-## How a unit of work runs (the workflow)
+## One shift (the `shift` workflow)
 
-`execute-phased-plan` (installed at `.claude/workflows/`) takes a phase map and:
+A shift takes a phase map and:
 
 1. **Implements** each phase in a fresh git worktree on its own branch (parallel
    phases concurrently, serial phases one after another). Agents merge current
@@ -114,28 +103,28 @@ contract and a worked example.
    what is unverified, which flags are real, and what a human should look at.
 
 Crash-only: if agents start dying (usage limit), the workflow stops spawning and
-returns `continueWith` — the args for the next launch. The supervisor persists
+returns `continueWith` — the args for the next shift. The supervisor persists
 it. Never resume with `resumeFromRunId`; relaunch with `continueWith`.
 
 ## Budget awareness
 
 Every headless `claude -p` stream carries `rate_limit_event` records with
 per-window utilisation and reset time (`five_hour`, `seven_day`). Before each
-unit the supervisor probes (one cheap haiku call) and, if a window is at or
-above `maxUtil`, sleeps until its `resetsAt` + 3 min. A unit killed by the limit
-anyway sleeps to the reset reported in its own stream. Nothing is lost either
-way: work is committed at milestones.
+shift the supervisor probes (one cheap haiku call) and, if a window is at or
+above `maxUtil`, sleeps until its `resetsAt` + 3 min. A shift killed by the
+limit anyway sleeps to the reset reported in its own stream. Nothing is lost
+either way: work is committed at milestones.
 
 ## Policy: it does not ask
 
 No approval gates. Agents use their judgment, record deviations in the plan's
 "Done" blocks and handoffs, and keep going — every merge is a commit, so
-anything can be reverted. The supervisor stops only for:
+anything can be reverted. nightshift clocks out only for:
 
-- `handoff/STOP` (or `… stop`),
+- `handoff/STOP` (`nightshift stop`),
 - the groomer declaring the backlog dry,
-- a hard blocker: `maxUnreadable` units in a row without a readable result, or
-  a conflicted/unbuildable `main` that one repair unit could not fix.
+- a hard blocker: `maxUnreadable` shifts in a row without a readable result, or
+  a conflicted/unbuildable `main` that one repair shift could not fix.
 
 Items that need a human — product decisions, dead URLs, credentials, hardware —
 go on a **"Backlog — needs a human"** list in the plan and the run moves on.
@@ -144,10 +133,10 @@ go on a **"Backlog — needs a human"** list in the plan and the run moves on.
 
 | path | what |
 |---|---|
-| `.claude/workflows/execute-phased-plan.js` | the workflow (commit it) |
-| `.claude/agent-supervisor.json` | config (commit it) |
+| `.claude/nightshift.json` | config (commit it) |
+| `.claude/workflows/shift.js` | the workflow, CLI install only (commit it) |
 | `handoff/phase-<id>.md` | per-phase handoffs written by agents (commit them — they are the project memory) |
-| `handoff/STATE.json`, `supervisor.log`, `STOP` | runtime state (gitignored) |
+| `handoff/STATE.json`, `nightshift.log`, `STOP` | runtime state (gitignored) |
 
 ## Lessons baked in
 
@@ -161,29 +150,29 @@ go on a **"Backlog — needs a human"** list in the plan and the run moves on.
 - **Kill the spawn, not the work** — two dead agents in a row means the account
   limit; stop spawning, return the continuation, let the outer loop sleep.
 
-## Also usable without the supervisor
+## One shift by hand
 
 Inside an interactive Claude Code session, say "use a workflow" and:
 
 ```
-Workflow({ name: 'claude-plan-runner:execute-phased-plan',   // or 'execute-phased-plan' after `init`
+Workflow({ name: 'nightshift:shift',   // or 'shift' after a CLI install
            args: { repo: '/abs/path', planFile: 'PLAN.md', serial: ['1','2'], parallel: ['3'], phases: {...}, tests: [...], mainBase: 'http://localhost:5200' } })
 ```
 
-The full `args` contract is documented at the top of the workflow file.
+The full `args` contract is documented at the top of `workflows/shift.js`.
 
 ## Repository layout
 
 ```
-.claude-plugin/plugin.json, marketplace.json   # Claude Code plugin + single-plugin marketplace
-workflows/execute-phased-plan.js               # the Workflow-tool script (plugin: claude-plan-runner:execute-phased-plan)
-skills/plan-runner/SKILL.md                    # /plan-runner onboarding skill
-bin/cli.mjs, bin/agent-supervisor.mjs          # init/run/stop/status/doctor; the outer loop
-templates/agent-supervisor.json                # per-project config template
+.claude-plugin/plugin.json, marketplace.json   # Claude Code plugin + single-plugin marketplace "tomaash"
+workflows/shift.js                             # the Workflow-tool script (plugin: nightshift:shift)
+skills/nightshift/SKILL.md                     # /nightshift install | run | stop | status
+bin/cli.mjs, bin/supervisor.mjs                # the CLI; the outer loop
+templates/nightshift.json                      # per-project config template
 docs/PLAN-FORMAT.md                            # how to write a plan agents can execute
 ```
 
 ## License
 
 MIT. Built on 2026-09-03 while porting a display renderer to parity with two
-incumbent players — ten phases, 40 agents, one overnight run.
+incumbent players — ten phases, 40 agents, one night.

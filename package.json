@@ -1,12 +1,12 @@
 {
-  "name": "claude-plan-runner",
-  "version": "0.1.0",
-  "description": "Run a phased plan to completion with Claude Code agents — unattended, across usage-limit resets, until the backlog is dry",
+  "name": "nightshift",
+  "version": "0.2.0",
+  "description": "Hand Claude Code a written plan and go to sleep. Implementer agents in worktrees, an adversarial reviewer, one merge at a time onto main — unattended, across usage-limit resets, until the backlog is dry.",
   "type": "module",
-  "bin": { "claude-plan-runner": "bin/cli.mjs" },
-  "files": ["bin", "workflows", "templates", "install.sh", "README.md", "LICENSE"],
+  "bin": { "nightshift": "bin/cli.mjs" },
+  "files": ["bin", "workflows", "templates", "README.md", "LICENSE"],
   "engines": { "node": ">=20" },
-  "keywords": ["claude-code", "agents", "workflow", "orchestration", "autonomous"],
+  "keywords": ["claude-code", "agents", "workflow", "orchestration", "autonomous", "unattended"],
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/tomaash/claude-plan-runner" }
+  "repository": { "type": "git", "url": "https://github.com/tomaash/nightshift" }
 }

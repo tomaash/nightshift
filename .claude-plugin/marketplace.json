@@ -3,9 +3,9 @@
   "owner": { "name": "Tomas Holas" },
   "plugins": [
     {
-      "name": "claude-plan-runner",
+      "name": "nightshift",
       "source": "./",
-      "description": "Run a phased plan to completion with Claude Code agents — unattended, across usage-limit resets, until the backlog is dry."
+      "description": "Hand Claude Code a written plan and go to sleep. Runs it unattended, across usage-limit resets, until the backlog is dry."
     }
   ]
 }

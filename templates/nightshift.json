@@ -1,9 +1,9 @@
 {
-  "//": "Per-project config for claude-plan-runner. Lives at <project>/.claude/agent-supervisor.json. Paths relative to the project root.",
+  "//": "nightshift config. Lives at <project>/.claude/nightshift.json. Paths relative to the project root.",
   "planFile": "PLAN.md",
   "contextFiles": [],
   "handoffDir": "handoff",
-  "workflowName": "execute-phased-plan",
+  "workflowName": "shift",
   "devServer": {
     "port": 5200,
     "command": ["npx", "vite", "--port", "5200", "--strictPort"]
