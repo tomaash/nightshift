@@ -36,12 +36,12 @@ Prerequisites: [Claude Code](https://code.claude.com) signed in, `git`, Node ≥
 **From a terminal** (no plugin — the workflow is copied into your repo):
 
 ```bash
-npm i -g @tomaash/nightshift
-nightshift install
-nightshift run
+npx github:tomaash/nightshift install
+npx github:tomaash/nightshift run
 ```
 
-(or one-shot: `npx @tomaash/nightshift install`, `npx @tomaash/nightshift run`)
+(Not on npm — the GitHub repo is the distribution. `npm i -g github:tomaash/nightshift`
+gives you a plain `nightshift` command.)
 
 `install` writes `.claude/nightshift.json`, finds your plan (`PLAN.md`, or the
 single `*PLAN*.md` at the root), gitignores the runtime files and checks the
@@ -53,9 +53,9 @@ dev server, visual URL), then `run`.
 Watch, stop, check:
 
 ```bash
-tail -f handoff/nightshift.log   # or: tmux attach -t nightshift
-nightshift stop                  # graceful — finishes the current shift
-nightshift status
+tail -f handoff/nightshift.log         # or: tmux attach -t nightshift
+npx github:tomaash/nightshift stop     # graceful — finishes the current shift
+npx github:tomaash/nightshift status
 ```
 
 (`/nightshift stop` and `/nightshift status` do the same from inside Claude Code.)
