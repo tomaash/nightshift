@@ -1,7 +1,7 @@
 {
   "name": "nightshift",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Hand Claude Code a written plan and go to sleep. Implementer agents in worktrees, an adversarial reviewer, one merge at a time onto main — unattended, across usage-limit resets, until the backlog is dry.",
   "type": "module",
   "bin": {

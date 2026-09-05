@@ -1,0 +1,27 @@
+{
+  "//": "Merged into <project>/.claude/settings.json by `nightshift install`. SessionStart injects and deletes handoff.txt; Stop ends the session when <handoffDir>/NEXT_SESSION exists so shift-loop.sh starts the next one.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/handoff.txt\"; if [ -f \"$f\" ]; then jq -n --rawfile c \"$f\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:(\"# handoff.txt (auto-injected; the file has been deleted)\\n\\n\"+$c)}}' && rm \"$f\"; fi",
+            "statusMessage": "Injecting handoff.txt"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/.claude/nightshift/shift-stop-hook.sh\"",
+            "statusMessage": "nightshift loop: checking for NEXT_SESSION"
+          }
+        ]
+      }
+    ]
+  }
+}
