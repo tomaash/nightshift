@@ -1,6 +1,6 @@
 {
   "name": "nightshift",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Hand Claude Code a written plan and go to sleep. Runs it unattended — implementer agents in worktrees, adversarial review, one merge at a time onto main — across usage-limit resets, until the backlog is dry. Provides the `shift` workflow and the /nightshift skill (install, loop, run, stop, status).",
   "author": { "name": "Tomas Holas" },
   "homepage": "https://github.com/tomaash/nightshift",

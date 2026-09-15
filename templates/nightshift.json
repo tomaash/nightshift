@@ -13,6 +13,7 @@
   "visualUrl": "/",
   "model": "opus",
   "maxUtil": 0.9,
+  "probeMinutes": 10,
   "maxUnreadable": 3,
   "groomBatch": 4,
   "portBase": 5301

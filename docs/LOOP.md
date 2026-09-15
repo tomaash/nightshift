@@ -40,6 +40,28 @@ nightshift status
 The loop's own lines go to `<handoffDir>/shift-loop.log`; the session itself is
 visible in the tmux pane.
 
+## Usage: wind down instead of getting killed
+
+`shift-loop.sh` starts a background watchdog (`usage.mjs watch`) that probes
+the account's rate-limit windows every `probeMinutes` (config, default 10).
+At `maxUtil` (config, default 0.9) it writes `handoff/CONTROL.json`
+`{ windDown: true }`. Every agent in the running shift reads that file at its
+next milestone and winds down on purpose — commits, writes a precise
+handoff, returns a `wind-down` flag — instead of being killed mid-tool-call
+by the platform. The workflow halts further spawns the moment it sees that
+flag and returns a paused report; the lead session saves its `continueWith`
+to `STATE.json` exactly as it would for any other pause. Before starting the
+next session, the loop script waits on `usage.mjs wait`, which blocks until
+every window is back under `maxUtil` (sleeping to the reset + 3 min) and
+clears the flag — so the next shift starts itself once usage is available
+again, with no manual restart.
+
+`nightshift steer "<text>"` appends to `handoff/STEER.md`, which every spawned
+agent (and the lead session) reads before acting and at each milestone — use
+it to redirect a shift already in flight. `nightshift winddown` sets the same
+flag by hand, for when you want the current shift to stop gracefully right
+now rather than wait for the threshold. `nightshift usage` reports one probe.
+
 ## Stopping
 
 - `nightshift stop` writes `<handoffDir>/STOP`. The loop checks it before each

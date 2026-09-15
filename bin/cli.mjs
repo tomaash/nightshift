@@ -7,6 +7,10 @@
  *                              --dry-run: two-session handoff-cycle test, no workflow   --fg: in this terminal
  *   nightshift run             headless supervisor in tmux "nightshift" (--fg: in this terminal)
  *   nightshift stop            graceful: the current shift/session finishes, then the loop/supervisor exits
+ *   nightshift steer "<text>"  append an instruction to <handoff>/STEER.md — every agent re-reads it at each milestone
+ *   nightshift winddown        write <handoff>/CONTROL.json {windDown:true}: agents commit + hand off at their next
+ *                              milestone, the workflow stops spawning, the loop waits for the usage reset and restarts
+ *   nightshift usage           one probe: fullest rate-limit window and its reset time
  *   nightshift status          what is running, what is queued, what happened last
  *
  *   flags: --repo <dir>   --plugin (the workflow comes from the Claude Code plugin; copy nothing)
@@ -89,6 +93,7 @@ const install = () => {
     writeFileSync(dst, fill(readFileSync(join(HERE, 'templates', f), 'utf8')))
     if (f.endsWith('.sh')) chmodSync(dst, 0o755)
   }
+  copyFileSync(join(HERE, 'bin/usage.mjs'), join(LOOP_DIR, 'usage.mjs')) // the watchdog + reset-wait the loop script runs
   out('loop', `scripts + seeds in ${LOOP_DIR} (workflow ${wfName}; re-run install after editing the config)`)
   const settingsPath = join(repo, '.claude/settings.json')
   const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {}
@@ -194,10 +199,30 @@ else if (cmd === 'stop') {
   const what = [tmuxHas('shift-loop') && 'the loop (tmux: shift-loop) exits after the current session finishes its shift', tmuxHas('nightshift') && 'the supervisor (tmux: nightshift) exits after the current shift'].filter(Boolean)
   console.log(`wrote ${p} — ${what.join('; ') || 'nothing is running in tmux; remove the file before the next loop/run'}`)
 }
+else if (cmd === 'steer') {
+  const text = argv.slice(1).filter((a) => !a.startsWith('--') && a !== repo).join(' ').trim()
+  if (!text) die('nightshift steer "<instruction>"')
+  const p = join(handoffOf(readConfig()), 'STEER.md')
+  mkdirSync(dirname(p), { recursive: true })
+  appendFileSync(p, `\n## ${new Date().toISOString()}\n${text}\n`)
+  console.log(`appended to ${p} — agents pick it up at their next milestone; the lead session when it next acts`)
+}
+else if (cmd === 'winddown') {
+  const p = join(handoffOf(readConfig()), 'CONTROL.json')
+  mkdirSync(dirname(p), { recursive: true })
+  writeFileSync(p, JSON.stringify({ windDown: true, reason: 'operator: nightshift winddown', at: new Date().toISOString() }, null, 2) + '\n')
+  console.log(`wrote ${p} — agents commit and hand off at their next milestone, the workflow stops spawning; the loop clears the flag when usage allows and starts the next session. To stop for good instead: nightshift stop`)
+}
+else if (cmd === 'usage') {
+  const r = spawnSync(process.execPath, [join(HERE, 'bin/usage.mjs'), 'probe', '--repo', repo], { encoding: 'utf8' })
+  process.stdout.write(r.stdout || r.stderr)
+}
 else if (cmd === 'status') {
   const c = readConfig()
   const live = [tmuxHas('shift-loop') && 'loop (tmux: shift-loop)', tmuxHas('nightshift') && 'supervisor (tmux: nightshift)'].filter(Boolean)
   const stopped = existsSync(join(handoffOf(c), 'STOP')) ? '  STOP file present' : ''
+  try { const ctl = JSON.parse(readFileSync(join(handoffOf(c), 'CONTROL.json'), 'utf8')); if (ctl.windDown) console.log(`WIND-DOWN in effect: ${ctl.reason || ''}${ctl.resetsAt ? ` (resets ${ctl.resetsAt})` : ''}`) } catch {}
+  if (existsSync(join(handoffOf(c), 'STEER.md'))) console.log(`STEER.md present (${readFileSync(join(handoffOf(c), 'STEER.md'), 'utf8').trim().split('\n').length} lines)`)
   const p = join(handoffOf(c), 'STATE.json')
   if (!existsSync(p)) { console.log(`${live.length ? 'running: ' + live.join(', ') : 'not running'}${stopped}\nno STATE.json yet — the first shift will be a groom`); process.exit(0) }
   const s = JSON.parse(readFileSync(p, 'utf8'))

@@ -57,12 +57,27 @@ if (!REPO || !A.planFile) throw new Error('args.repo and args.planFile are requi
 // --- circuit breaker: stop spawning once the platform starts killing agents ---------------
 
 let halted = false
+let haltReason = 'agents were being killed by the platform (spend limit or terminal API errors); spawning was halted to avoid nondeterministic partial work'
 let consecutiveDead = 0
 const state = { merged: [], implemented: [], reviewed: [], failed: [], skipped: [] }
+
+// --- operator steering -----------------------------------------------------------------------------
+// Two files in <handoff>/, read by EVERY agent at spawn and at every milestone (this script has no filesystem access,
+// so the agents are the sensors):
+//   CONTROL.json  { windDown: true, reason }  — written by the usage watchdog (usage.mjs watch) at maxUtil or by
+//                 `nightshift winddown`. An agent that sees it commits, writes its handoff and returns with the flag
+//                 'wind-down' (a reviewer: verdict 'fail' with the single issue 'wind-down'). The first such return
+//                 halts every further spawn here and the run returns a paused report with continueWith.
+//   STEER.md      free text from the operator (`nightshift steer "…"`); overrides the briefs, newest wins.
+const CONTROL_PATH = `${REPO}/${HANDOFF}/CONTROL.json`
+const STEER_PATH = `${REPO}/${HANDOFF}/STEER.md`
+const isWindDown = (r) => !!r && ((Array.isArray(r.flags) && r.flags.some((f) => /^wind-down/i.test(String(f)))) || (Array.isArray(r.issues) && r.issues.some((i) => /^wind-down/i.test(String(i)))))
+const noteWindDown = (label) => { if (!halted) { halted = true; haltReason = `operator/watchdog wind-down (${CONTROL_PATH}) — first reported by ${label}; spawning halted, in-flight agents finish at their next milestone`; log(haltReason) } }
 
 const spawn = async (prompt, opts) => {
   if (halted) return null
   const r = await agent(prompt, opts)
+  if (isWindDown(r)) noteWindDown(opts && opts.label || 'an agent')
   if (r === null) {
     consecutiveDead++
     if (consecutiveDead >= 2 && !halted) {
@@ -86,6 +101,7 @@ You are one agent in a multi-agent run executing a written plan in ${REPO}. Read
 ${A.previousRun ? `3. State from a previous run: ${A.previousRun}` : ''}
 
 Ground rules:
+- OPERATOR STEERING, FIRST and at EVERY milestone: read ${STEER_PATH} (instructions from the operator; they override this brief — obey the newest) and ${CONTROL_PATH}. If CONTROL.json has "windDown": true, wind down NOW, do not start anything new: commit what you have ("Phase <id> [wind-down]: …"), write the handoff with the exact state (verified / not verified / what the next agent must do first), kill your server, and return status 'partial' with the flag 'wind-down' as the FIRST flag (a reviewer returns verdict 'fail' with the single issue 'wind-down'; a merge agent that has not started merging returns merged false with the flag; one mid-merge finishes the merge and the tests, nothing else). If it is set when you START, return within a minute with that flag and no other work. A clean stop in ten minutes beats a kill mid-test.
 - Never log in anywhere or type credentials. If a reference site shows a login form, skip that measurement and flag it.
 - Browser (if the plan needs it): load Chrome MCP tools via ToolSearch ("select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__tabs_close_mcp"). Create your own tab, close it when done, never navigate a tab you did not create. Click the page once after load.
 - Worktree setup (the harness cuts worktrees bare and possibly from a stale base): first run git log --oneline -3 main && git merge main (or rebase) so you build on CURRENT main; ln -s ${REPO}/node_modules <worktree>/node_modules; cp ${REPO}/.env.local <worktree>/ if it exists (gitignored secrets the dev server needs). Never run package installs or patch-package in a worktree.
@@ -124,7 +140,8 @@ A previous agent implemented this phase in worktree ${r.worktreePath} (branch ${
 An adversarial reviewer failed it — fix every issue, re-verify (including the visual check), update handoff and plan, commit on the same branch:
 ${review.issues.map((i, n) => `${n + 1}. ${i}`).join('\n')}`
 
-const reviewPrompt = (id, r) => `You are an adversarial reviewer. Phase ${id} (${PHASES[id].title}) of ${PLAN} was implemented on branch ${r.branch} in worktree ${r.worktreePath}. Read the phase section and the plan's evidence sections, the handoff ${r.handoffPath}, and the diff (cd ${r.worktreePath} && git diff main...HEAD). Try to REFUTE it:
+const reviewPrompt = (id, r) => `FIRST read ${CONTROL_PATH} and ${STEER_PATH}: if CONTROL.json has "windDown": true, return verdict 'fail' with the single issue 'wind-down' and do nothing else; otherwise obey STEER.md over anything below, then proceed.
+You are an adversarial reviewer. Phase ${id} (${PHASES[id].title}) of ${PLAN} was implemented on branch ${r.branch} in worktree ${r.worktreePath}. Read the phase section and the plan's evidence sections, the handoff ${r.handoffPath}, and the diff (cd ${r.worktreePath} && git diff main...HEAD). Try to REFUTE it:
 - Does the code match the spec the plan cites (file:line), or did it follow a convenient source the plan says loses?
 - Any anti-pattern the plan lists?
 - Snapshots/goldens updated outside this phase's own fixture without a recorded measurement?
@@ -132,7 +149,8 @@ const reviewPrompt = (id, r) => `You are an adversarial reviewer. Phase ${id} ($
 - Dev server left running, main edited, required test set not run?
 To run tests yourself start your own server on port ${(PHASES[id].port || 5400) + 50} in the worktree and pass --base; never use ${A.mainBase || 'the main server'}. Be concrete, cite file:line; 'fail' only for real defects or unverified claims. Do not modify files.`
 
-const mergePrompt = (id, r) => `You are the merge-and-verify agent for ${REPO} (on main; nobody else edits main while you run). Merge branch ${r.branch} (Phase ${id}: ${PHASES[id].title}; worktree ${r.worktreePath}, handoff ${r.handoffPath}), then verify main.
+const mergePrompt = (id, r) => `FIRST read ${CONTROL_PATH} and ${STEER_PATH}: if CONTROL.json has "windDown": true, return merged false with the flag 'wind-down' and do nothing else (the branch stays for the next shift); otherwise obey STEER.md over anything below, then proceed.
+You are the merge-and-verify agent for ${REPO} (on main; nobody else edits main while you run). Merge branch ${r.branch} (Phase ${id}: ${PHASES[id].title}; worktree ${r.worktreePath}, handoff ${r.handoffPath}), then verify main.
 1. git merge --no-ff ${r.branch} -m "Merge Phase ${id}: ${PHASES[id].title}". Resolve conflicts by reading both sides and the plan; never drop the other side's work.
 2. ${A.mainBase ? `The dev server ${A.mainBase} serves main (HMR) — do not start another on its port. Run each of: ${TESTS.map((t) => withBase(t, A.mainBase)).join(' ; ') || '(the plan\'s test list)'}.` : 'Run the plan\'s test list against main.'}
 3. Failures: update snapshots only for this phase's own fixture when the handoff explains the diff; otherwise flag, do not update.
@@ -161,6 +179,7 @@ const runPhase = async (id, group) => {
   if (r.status === 'blocked') return { id, status: 'blocked', flags: r.flags, summary: r.summary }
   let review = await spawn(reviewPrompt(id, r), { label: `refute:${id}`, phase: group, schema: REVIEW, model: MODEL, effort: 'medium' })
   let pass = 0
+  if (isWindDown(review)) return { id, status: r.status, merged: false, flags: [...(r.flags || []), 'not merged: wind-down before review'], branch: r.branch, worktreePath: r.worktreePath }
   while (review && review.verdict === 'fail' && pass < MAX_FIX && !halted) {
     pass++
     log(`Phase ${id}: review failed (${review.issues.length}) — fix pass ${pass}`)
@@ -209,7 +228,8 @@ const continueWith = {
 if (halted || remaining.length > 0 && results.some((r) => r.status === 'agent-died')) {
   return {
     paused: true,
-    reason: 'agents were being killed by the platform (spend limit or terminal API errors); spawning was halted to avoid nondeterministic partial work',
+    reason: haltReason,
+    windDown: /wind-down/.test(haltReason),
     resetAt: A.resetAt || null,
     merged: state.merged,
     results,
@@ -231,7 +251,8 @@ Append a "Run" section to ${PLAN}: per phase merged?, tests, flags; then every o
 
 let critic = null
 if (A.critic !== false && !halted) {
-  critic = await spawn(`You are the completeness critic for a multi-agent run that executed phases ${[...SERIAL, ...PARALLEL].join(', ')} of ${PLAN}. Read the plan (every "Done" block and the "Run" section), every ${REPO}/${HANDOFF}/*.md, and git log --oneline -60. Answer briefly, as a prioritised list for the human: (1) plan items NOT implemented or NOT verified with a number/test/screenshot; (2) flags that are real defects vs noise — the 3–5 things to look at first; (3) snapshots updated without justification; (4) handoffs showing lost or confused context (contradictions, repeated work, retracted claims); (5) whether the docs tell the truth about what shipped. Do not modify files. Under 600 words.`,
+  critic = await spawn(`FIRST read ${CONTROL_PATH}: if it has "windDown": true, return the single line 'wind-down' and nothing else.
+You are the completeness critic for a multi-agent run that executed phases ${[...SERIAL, ...PARALLEL].join(', ')} of ${PLAN}. Read the plan (every "Done" block and the "Run" section), every ${REPO}/${HANDOFF}/*.md, and git log --oneline -60. Answer briefly, as a prioritised list for the human: (1) plan items NOT implemented or NOT verified with a number/test/screenshot; (2) flags that are real defects vs noise — the 3–5 things to look at first; (3) snapshots updated without justification; (4) handoffs showing lost or confused context (contradictions, repeated work, retracted claims); (5) whether the docs tell the truth about what shipped. Do not modify files. Under 600 words.`,
     { label: 'critic', phase: 'Docs + critic', effort: 'high' })
 }
 

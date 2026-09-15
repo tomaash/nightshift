@@ -130,13 +130,47 @@ supervisor) persists it in `handoff/STATE.json`. Never resume with
 
 ## Budget awareness
 
-In `loop` mode a usage limit simply pauses the interactive session and Claude
-Code resumes it at the reset; nothing to configure. In `run` mode: every headless `claude -p` stream carries `rate_limit_event` records with
-per-window utilisation and reset time (`five_hour`, `seven_day`). Before each
-shift the supervisor probes (one cheap haiku call) and, if a window is at or
-above `maxUtil`, sleeps until its `resetsAt` + 3 min. A shift killed by the
-limit anyway sleeps to the reset reported in its own stream. Nothing is lost
-either way: work is committed at milestones.
+In `run` mode: every headless `claude -p` stream carries `rate_limit_event`
+records with per-window utilisation and reset time (`five_hour`, `seven_day`).
+Before each shift the supervisor probes (one cheap haiku call) and, if a
+window is at or above `maxUtil`, sleeps until its `resetsAt` + 3 min. A shift
+killed by the limit anyway sleeps to the reset reported in its own stream.
+
+In `loop` mode the same probe runs as a background **usage watchdog**
+(`bin/usage.mjs watch`, started by `shift-loop.sh`, one probe every
+`probeMinutes` — default 10). At `maxUtil` it writes `<handoff>/CONTROL.json`
+`{ windDown: true }`. Every agent the running shift spawns reads that file at
+its next milestone and winds down instead of being killed mid-tool-call:
+commits what it has, writes an exact handoff, returns a `wind-down` flag. The
+first agent to report it halts new spawns for the rest of the shift, and the
+workflow returns a paused report (`windDown: true`) whose `continueWith` is
+the exact next shift. The loop session saves that continueWith to
+`STATE.json` as usual, then before starting the next session runs
+`usage.mjs wait`, which sleeps to the fullest window's reset (+3 min),
+re-probes, clears the flag, and only then starts the next `claude` process —
+so restart after a usage reset is automatic, not something you do by hand.
+
+Either way nothing is lost: work is committed at milestones, and a graceful
+wind-down commits far more of it than a hard kill ever did.
+
+## Steering a running shift
+
+`nightshift steer "<instruction>"` appends a timestamped entry to
+`<handoff>/STEER.md`. Every agent the workflow spawns — implementer,
+reviewer, merge, docs, critic — reads it before starting and again at every
+milestone, and is told it overrides the phase brief (newest entry wins). Use
+it for anything you notice mid-flight that the plan did not anticipate: "skip
+the visual check on port 53xx, the display is disconnected", "the reference
+site is down, defer any operator reading", "stop touching `foo.js`, I'm
+editing it by hand". It reaches the LEAD session too — the seed tells it to
+check `STEER.md` before acting — so you can also just send that session a
+message directly if you are watching its tmux pane.
+
+`nightshift winddown` writes `CONTROL.json` by hand — the same trigger the
+watchdog uses, for when you want to end a shift gracefully right now (heavy
+local load, going to bed and don't want the loop starting a new shift on
+your account). `nightshift usage` prints one probe result without waiting on
+anything.
 
 ## Policy: it does not ask
 
