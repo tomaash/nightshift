@@ -20,6 +20,8 @@ cd "$REPO" || exit 1
 CFG="$REPO/.claude/nightshift.json"
 HANDOFF=$(sed -n 's/.*"handoffDir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CFG" 2>/dev/null | head -n 1)
 : "${HANDOFF:=handoff}"
+MODEL=$(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CFG" 2>/dev/null | head -n 1)
+: "${MODEL:=opus}"
 HANDOFF="$REPO/$HANDOFF"
 SEED="${1:-$HERE/shift-seed.md}"
 [ -f "$SEED" ] || { echo "shift-loop: seed not found: $SEED" >&2; exit 1; }
@@ -30,8 +32,8 @@ say "loop started in $REPO (seed $(basename "$SEED"), log $LOG)"
 while :; do
   if [ -f "$HANDOFF/STOP" ]; then say "$HANDOFF/STOP present — not starting another session"; exit 0; fi
   rm -f "$HANDOFF/NEXT_SESSION"
-  say "starting a session"
-  claude --dangerously-skip-permissions "$(cat "$SEED")"
+  say "starting a session (model $MODEL)"
+  claude --model "$MODEL" --dangerously-skip-permissions "$(cat "$SEED")"
   say "session ended (exit $?) — next one in 10 s"
   sleep 10
 done
