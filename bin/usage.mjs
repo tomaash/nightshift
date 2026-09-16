@@ -27,8 +27,15 @@ const opt = (f, d) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] :
 const MAX = Number(opt('--max', '0.9'))
 const REPO = opt('--repo', process.cwd())
 
+// Never hangs: settles exactly once, at most ~135s from the call, no matter what the child process does (spawn
+// failure, a wedged CLI that ignores SIGTERM, a 'close' that never fires). A watchdog loop depends on this.
 export const probe = () => new Promise((res) => {
-  const child = spawn('claude', ['-p', 'Reply with exactly: ok', '--output-format', 'stream-json', '--verbose', '--model', 'haiku'], { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] })
+  let settled = false
+  const done = (v) => { if (settled) return; settled = true; clearTimeout(hardTimer); res(v) }
+  let child
+  try {
+    child = spawn('claude', ['-p', 'Reply with exactly: ok', '--output-format', 'stream-json', '--verbose', '--model', 'haiku'], { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (e) { return done({ info: null, stderr: `spawn threw: ${e && e.message}` }) }
   let out = '', info = null, err = ''
   child.stdout.on('data', (d) => {
     out += d
@@ -41,8 +48,14 @@ export const probe = () => new Promise((res) => {
     }
   })
   child.stderr.on('data', (d) => { err += d })
-  child.on('close', () => res({ info, stderr: err.slice(-500) }))
-  setTimeout(() => { try { child.kill() } catch {} }, 120000).unref()
+  child.on('error', (e) => done({ info, stderr: `spawn error: ${e && e.message}` }))
+  child.on('close', () => done({ info, stderr: err.slice(-500) }))
+  const killTimer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 120000)
+  killTimer.unref()
+  // Independent of the child's lifecycle entirely: guarantees probe() settles even if 'close' never fires
+  // (a wedged process that survives SIGKILL on a hung syscall, or an event we didn't anticipate).
+  const hardTimer = setTimeout(() => done({ info, stderr: 'probe timed out (135s) — treating as no rate info' }), 135000)
+  hardTimer.unref()
 })
 
 export const windows = (info) => {
@@ -92,17 +105,21 @@ const main = async () => {
     process.on('SIGTERM', () => { stop = true; log('SIGTERM — exiting'); process.exit(0) })
     process.on('SIGINT', () => process.exit(0))
     log(`started (max ${pct(MAX)}, every ${every / 60000} min, control ${control})`)
+    // Every iteration is independently guarded: one bad probe or a write failure must never silently end the
+    // watchdog's life for the rest of the loop — the whole point of this process is to keep ticking unattended.
     while (!stop) {
-      const { info } = await probe()
-      const w = fullest(info)
-      if (!w) log('no rate info from the probe — not acting')
-      else {
-        const c = readControl(control)
-        if (w.utilization >= MAX && !c.windDown) {
-          writeControl(control, { windDown: true, reason: `usage ${fmt(w)} reached the ${pct(MAX)} wind-down threshold`, window: w.name, utilization: w.utilization, resetsAt: new Date(w.resetsAt).toISOString(), at: new Date().toISOString() })
-          log(`WIND DOWN written — ${fmt(w)}`)
-        } else log(`${fmt(w)}${c.windDown ? ' (wind-down already set)' : ''}`)
-      }
+      try {
+        const { info } = await probe()
+        const w = fullest(info)
+        if (!w) log('no rate info from the probe — not acting')
+        else {
+          const c = readControl(control)
+          if (w.utilization >= MAX && !c.windDown) {
+            writeControl(control, { windDown: true, reason: `usage ${fmt(w)} reached the ${pct(MAX)} wind-down threshold`, window: w.name, utilization: w.utilization, resetsAt: new Date(w.resetsAt).toISOString(), at: new Date().toISOString() })
+            log(`WIND DOWN written — ${fmt(w)}`)
+          } else log(`${fmt(w)}${c.windDown ? ' (wind-down already set)' : ''}`)
+        }
+      } catch (e) { log(`iteration error (continuing): ${e && e.message}`) }
       await sleep(every)
     }
   }
