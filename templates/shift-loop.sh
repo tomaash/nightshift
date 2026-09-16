@@ -41,7 +41,7 @@ WATCHDOG_PID=
 if [ -f "$USAGE" ]; then
   node "$USAGE" watch --max "$MAXUTIL" --every "$PROBE_MIN" --handoff "$HANDOFF" --repo "$REPO" >> "$HANDOFF/watchdog.log" 2>&1 &
   WATCHDOG_PID=$!
-  say "usage watchdog pid $WATCHDOG_PID (wind down at $(awk "BEGIN{printf \"%d\", $MAXUTIL*100}")%, probe every $PROBE_MIN min, log $HANDOFF/watchdog.log)"
+  say "usage watchdog pid $WATCHDOG_PID (wind down at maxUtil=$MAXUTIL, probe every $PROBE_MIN min, log $HANDOFF/watchdog.log)"
 fi
 cleanup() { [ -n "$WATCHDOG_PID" ] && kill "$WATCHDOG_PID" 2>/dev/null; }
 trap 'cleanup; exit 0' INT TERM EXIT
