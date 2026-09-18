@@ -5,7 +5,8 @@ export const meta = {
   phases: [
     { title: 'Serial track', detail: 'phases that touch the same files, one after another' },
     { title: 'Parallel branch', detail: 'independent phases, each in its own worktree' },
-    { title: 'Merge + verify', detail: 'one merge at a time onto main; full suite; visual check' },
+    { title: 'Merge + verify', detail: 'one merge at a time onto main; the quick gate; visual check' },
+    { title: 'Shift gate', detail: 'the full suite, ONCE, on merged main after the last merge' },
     { title: 'Docs + critic', detail: 'optional docs phase on main, then a completeness critic' },
   ],
 }
@@ -21,9 +22,18 @@ ARGS (all paths absolute; pass real JSON, not a string):
   serial:   ['3a', '3b', '5'],             // run one after another, each merged before the next starts
   parallel: ['4', '6', '7'],               // run concurrently in worktrees, merged as they finish
   phases: {                                // one entry per id above
-    '3a': { title: 'Wrapping', port: 5301, brief: 'phase-specific facts, fixture ids, prior findings…' },
-  },
+    '3a': { title: 'Wrapping', port: 5301, brief: 'phase-specific facts, fixture ids, prior findings…', tests: ['npm test -- --only wrap'] },
+  },                                       // phases[id].tests overrides `tests` for that phase's own quick gate
+
+  // TWO TIERS. `tests` is the QUICK gate: it runs per phase (implementer, reviewer,
+  // merge-and-verify) and should be the suites that phase can plausibly break, plus
+  // whatever is cheap and catches structural damage. `fullTests` is the SHIFT gate:
+  // it runs ONCE, on merged main, after the last merge — its own step, so it happens
+  // even when there is no docs phase. Leaving `fullTests` unset means both tiers are
+  // the same list (old behaviour, plus one consolidated final run); `fullTests: []`
+  // switches the shift gate off entirely.
   tests: ['node test/golden/run.mjs', 'node test/marquee-parity.mjs'],  // each gets " --base <url>" appended when testsTakeBase (default true)
+  fullTests: ['npm test'],                 // the shift gate; defaults to `tests`
   testsTakeBase: true,
   visualUrl: '/?uid=poc',                  // page for the mandatory end-of-phase look (on the agent's own server)
   docs: { id: '10', brief: '…' } | null,   // optional docs phase run on main after all merges
@@ -46,9 +56,13 @@ const PLAN = `${REPO}/${A.planFile}`
 const HANDOFF = A.handoffDir || 'handoff'
 const MODEL = A.model || 'opus'
 const MAX_FIX = A.maxFixPasses ?? 1
-const TESTS = A.tests || []
+const TESTS = A.tests || []                       // the QUICK gate, per phase
+const FULL_TESTS = A.fullTests || TESTS           // the SHIFT gate, once on merged main
 const TAKE_BASE = A.testsTakeBase !== false
 const withBase = (cmd, base) => (TAKE_BASE ? `${cmd} --base ${base}` : cmd)
+// A phase may narrow its own quick gate; anything it does not declare falls back to TESTS.
+const testsFor = (id) => (id && PHASES[id] && PHASES[id].tests) || TESTS
+const TWO_TIER = FULL_TESTS.length > 0 && FULL_TESTS.join(' ; ') !== TESTS.join(' ; ')
 const PHASES = A.phases || {}
 const SERIAL = A.serial || []
 const PARALLEL = A.parallel || []
@@ -94,7 +108,7 @@ const spawn = async (prompt, opts) => {
 
 const CONTEXT_FILES = [A.planFile, ...(A.contextFiles || [])].map((f) => `${REPO}/${f}`)
 
-const COMMON = `
+const common = (id) => `
 You are one agent in a multi-agent run executing a written plan in ${REPO}. Read before touching anything:
 1. ${CONTEXT_FILES.join(', ')} — the plan's decisions and evidence sections in full, then YOUR phase section in full.
 2. ${REPO}/${HANDOFF}/*.md — what earlier phases changed (line numbers in the plan drift; handoffs carry the current anchors).
@@ -105,7 +119,8 @@ Ground rules:
 - Never log in anywhere or type credentials. If a reference site shows a login form, skip that measurement and flag it.
 - Browser (if the plan needs it): load Chrome MCP tools via ToolSearch ("select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__tabs_close_mcp"). Create your own tab, close it when done, never navigate a tab you did not create. Click the page once after load.
 - Worktree setup (the harness cuts worktrees bare and possibly from a stale base): first run git log --oneline -3 main && git merge main (or rebase) so you build on CURRENT main; ln -s ${REPO}/node_modules <worktree>/node_modules; cp ${REPO}/.env.local <worktree>/ if it exists (gitignored secrets the dev server needs). Never run package installs or patch-package in a worktree.
-- Tests: never use ${A.mainBase || 'the main dev server'} from a worktree — it serves main. Start your own dev server in the worktree on <YOUR_PORT> (the project's dev command, e.g. npx vite --port <YOUR_PORT> --strictPort &)${TAKE_BASE ? ' and append --base http://localhost:<YOUR_PORT>' : ''} to each of: ${TESTS.join(' ; ') || '(the tests named in your phase section)'}. Kill your server before returning.
+- Tests — YOUR QUICK GATE, and it is the whole of what you run: never use ${A.mainBase || 'the main dev server'} from a worktree — it serves main. Start your own dev server in the worktree on <YOUR_PORT> (the project's dev command, e.g. npx vite --port <YOUR_PORT> --strictPort &)${TAKE_BASE ? ' and append --base http://localhost:<YOUR_PORT>' : ''} to each of: ${testsFor(id).join(' ; ') || '(the tests named in your phase section)'}. Kill your server before returning.${TWO_TIER ? `
+- DO NOT RUN THE FULL SUITE. The full suite (${FULL_TESTS.join(' ; ')}) is the SHIFT GATE: it runs ONCE, on merged main, after the last phase of this shift merges — not per phase. Running it here buys nothing and costs the shift its wall-clock; a peer agent's concurrent run can also redden timing-sensitive suites. Your quick gate above plus your phase section's own verification IS your evidence. If you believe your change can break something outside your quick gate, say so in the handoff as a flag and name the suite — do not run it.` : ''}
 - Mandatory end-of-phase visual check: open ${A.visualUrl || '/'} on YOUR server, click, wait 4 s, screenshot, zoom on the area your phase touches; record what you saw in the handoff. Suites passing while the real page is broken has happened.
 - Goldens/snapshots: update only when every differing case is your phase's own fixture, or the diff is explained by a measurement recorded in the handoff. Otherwise leave failing and flag.
 - CRASH-ONLY CONTRACT: you may be killed at any tool call. Write ${HANDOFF}/phase-<id>.md at every milestone (understood → implemented → tests → visual → done) with: what changed (files/functions), what was verified with numbers, what is flagged, what the next phase must know — and COMMIT on your branch at each milestone ("Phase <id> [milestone]: …"). A reader must be able to continue from the file alone. Also add a "**Done <date>**" block under your phase in the plan recording deliberate deviations from its letter.
@@ -113,6 +128,7 @@ Ground rules:
 - You run unattended. Do not stop to ask for approval or a review — every merge is a commit and can be reverted. Report 'blocked' ONLY for a hard blocker: the work cannot proceed without a credential or resource that is absent, or the repository is in a state you cannot repair. Judgment calls (an ambiguous spec, a golden that moved for a reason you can explain) are yours to make and record in the handoff, not reasons to stop.
 - Return ONLY the structured result. 'done' = every item of your phase section implemented and verified; 'partial' lists what is missing in flags; 'blocked' says why.
 `
+const COMMON = common(null)
 
 const RESULT = {
   type: 'object',
@@ -129,12 +145,12 @@ const RESULT = {
 const REVIEW = { type: 'object', required: ['verdict', 'issues'], properties: { verdict: { type: 'string', enum: ['pass', 'fail'] }, issues: { type: 'array', items: { type: 'string' } } } }
 const MERGE = { type: 'object', required: ['merged', 'tests', 'flags', 'summary'], properties: { merged: { type: 'boolean' }, tests: { type: 'object' }, flags: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
 
-const implPrompt = (id) => `${COMMON}
+const implPrompt = (id) => `${common(id)}
 YOUR PHASE: ${id} — ${PHASES[id].title}. Your dev-server port: ${PHASES[id].port}.
 ${PHASES[id].brief || ''}
 You are in a fresh git worktree on your own branch. Report branch and worktree path.`
 
-const fixPrompt = (id, r, review) => `${COMMON}
+const fixPrompt = (id, r, review) => `${common(id)}
 YOUR PHASE: ${id} — ${PHASES[id].title}, FIX PASS. Your dev-server port: ${PHASES[id].port}.
 A previous agent implemented this phase in worktree ${r.worktreePath} (branch ${r.branch}); work THERE. Its handoff: ${r.handoffPath}. Its flags: ${JSON.stringify(r.flags)}.
 An adversarial reviewer failed it — fix every issue, re-verify (including the visual check), update handoff and plan, commit on the same branch:
@@ -147,12 +163,13 @@ You are an adversarial reviewer. Phase ${id} (${PHASES[id].title}) of ${PLAN} wa
 - Snapshots/goldens updated outside this phase's own fixture without a recorded measurement?
 - Any handoff claim without a number, test run or screenshot? Was the mandatory visual check actually done?
 - Dev server left running, main edited, required test set not run?
+This phase's QUICK GATE is exactly: ${testsFor(id).join(' ; ') || "(the tests named in the phase section)"}. That is the set it owed you — do not fail it for skipping suites outside that set.${TWO_TIER ? ` The full suite (${FULL_TESTS.join(' ; ')}) is the SHIFT GATE and runs once on merged main after the last merge; do NOT run it here and do not fail the phase for not running it. If you think the change reaches beyond its quick gate, say which suite and why as an issue.` : ''}
 To run tests yourself start your own server on port ${(PHASES[id].port || 5400) + 50} in the worktree and pass --base; never use ${A.mainBase || 'the main server'}. Be concrete, cite file:line; 'fail' only for real defects or unverified claims. Do not modify files.`
 
 const mergePrompt = (id, r) => `FIRST read ${CONTROL_PATH} and ${STEER_PATH}: if CONTROL.json has "windDown": true, return merged false with the flag 'wind-down' and do nothing else (the branch stays for the next shift); otherwise obey STEER.md over anything below, then proceed.
 You are the merge-and-verify agent for ${REPO} (on main; nobody else edits main while you run). Merge branch ${r.branch} (Phase ${id}: ${PHASES[id].title}; worktree ${r.worktreePath}, handoff ${r.handoffPath}), then verify main.
 1. git merge --no-ff ${r.branch} -m "Merge Phase ${id}: ${PHASES[id].title}". Resolve conflicts by reading both sides and the plan; never drop the other side's work.
-2. ${A.mainBase ? `The dev server ${A.mainBase} serves main (HMR) — do not start another on its port. Run each of: ${TESTS.map((t) => withBase(t, A.mainBase)).join(' ; ') || '(the plan\'s test list)'}.` : 'Run the plan\'s test list against main.'}
+2. THE QUICK GATE, and nothing beyond it. ${A.mainBase ? `The dev server ${A.mainBase} serves main (HMR) — do not start another on its port. Run each of: ${testsFor(id).map((t) => withBase(t, A.mainBase)).join(' ; ') || '(the plan\'s test list)'}.` : `Run against main: ${testsFor(id).join(' ; ') || "the plan's test list"}.`}${TWO_TIER ? ` Do NOT run the full suite (${FULL_TESTS.join(' ; ')}) — it is the SHIFT GATE and runs once, on merged main, after the last merge of this shift. Your job is that the merge is clean and this phase's own suites are green.` : ''}
 3. Failures: update snapshots only for this phase's own fixture when the handoff explains the diff; otherwise flag, do not update.
 4. Visual check on ${A.mainBase || 'main'}${A.visualUrl || ''} (own tab; click; wait 4 s; screenshot; zoom the touched area). Anything clipped or shifted is a flag.
 5. git worktree remove --force ${r.worktreePath}; git branch -d ${r.branch} (keep it if not merged).
@@ -233,9 +250,32 @@ if (halted || remaining.length > 0 && results.some((r) => r.status === 'agent-di
     resetAt: A.resetAt || null,
     merged: state.merged,
     results,
+    gate: null,
+    gateNote: FULL_TESTS.length ? `THE SHIFT GATE DID NOT RUN — the full suite (${FULL_TESTS.join(' ; ')}) has not been run on this main. Each merged phase was verified against its quick gate only. The next shift's gate covers this one's merges too; until then main is UNGATED.` : null,
     continueWith,
     howToContinue: `After the limit resets${A.resetAt ? ` (${A.resetAt})` : ''}: Workflow({ name: 'shift' /* or 'nightshift:shift' */, args: <continueWith> }). Do NOT use resumeFromRunId.`,
   }
+}
+
+// --- the shift gate: the full suite, ONCE, on merged main ------------------------------------
+// Its own step, not a line in the docs brief, so it still happens when there is no docs phase
+// and so its result is structured rather than prose an agent may quietly skip.
+
+const GATE = { type: 'object', required: ['green', 'summary', 'failing', 'flags'], properties: { green: { type: 'boolean' }, summary: { type: 'string' }, failing: { type: 'array', items: { type: 'string' } }, flags: { type: 'array', items: { type: 'string' } }, counts: { type: 'object' } } }
+
+let gate = null
+if (FULL_TESTS.length && state.merged.length && !halted) {
+  phase('Shift gate')
+  gate = await spawn(`FIRST read ${CONTROL_PATH} and ${STEER_PATH}: if CONTROL.json has "windDown": true, return green false with the single flag 'wind-down' and do nothing else; otherwise obey STEER.md over anything below, then proceed.
+You are the SHIFT GATE for ${REPO}. Every phase of this shift is merged onto main (${state.merged.join(', ')}) and each was verified against its own QUICK gate only. You run the FULL suite, once, and you are the only run of it in this shift — so it must be a real reading, not a formality.
+1. Work directly in ${REPO} on main. Nobody else edits main now. git status --porcelain must be clean before you start; if it is not, report it as a flag and do not "tidy" it away.
+2. ${A.mainBase ? `The dev server ${A.mainBase} serves main — verify it serves THIS tree before trusting it (a stale server predating the merges is the classic false reading); do not start another on its port. Run each of: ${FULL_TESTS.map((t) => withBase(t, A.mainBase)).join(' ; ')}.` : `Run each of: ${FULL_TESTS.join(' ; ')}.`}
+3. Check first that no peer process is already running the suite — a concurrent run reddens timing-sensitive suites. Use an ANCHORED process check (match the command at the start of the line), never a loose substring match that also matches your own wrapper.
+4. REPORT THE TRUE RESULT. Do not re-run until it is green and quote the green one; if you re-run, quote EVERY run and say which is which. A red here is the shift's finding, not your failure — name the failing suites, quote the assertion, and say from git log --merges which merge is the first that could have caused it.
+5. Do NOT fix anything, do not re-baseline a golden or snapshot, do not commit. You are an instrument.
+Return: green (all suites passed), summary (one paragraph with the counts you actually measured), failing (one entry per failing suite: name + the assertion), flags.`,
+    { label: 'shift-gate', phase: 'Shift gate', schema: GATE, model: MODEL, effort: 'medium' })
+  if (gate) log(`shift gate: ${gate.green ? 'GREEN' : `RED — ${(gate.failing || []).join(', ')}`}`)
 }
 
 phase('Docs + critic')
@@ -244,6 +284,9 @@ if (A.docs && !halted) {
   docs = await spawn(`${COMMON}
 YOUR PHASE: ${A.docs.id} — docs + final verification. Work directly in ${REPO} on main (no worktree; nobody else edits main now; tests against ${A.mainBase || 'main'}). Results of the phases this run, as JSON:
 ${JSON.stringify(results, null, 1)}
+${gate ? `THE SHIFT GATE HAS ALREADY RUN the full suite on merged main — this is its structured result:
+${JSON.stringify(gate, null, 1)}
+Quote THOSE numbers in the Run section and do NOT run the full suite again; it is a ${FULL_TESTS.join(' ; ')} run and it is this shift's single reading. Re-run at most a named individual suite, and only when you must resolve a contradiction — say why you did, and report both readings.` : ''}
 Read every ${HANDOFF}/*.md and git log for the full picture. ${A.docs.brief || ''}
 Append a "Run" section to ${PLAN}: per phase merged?, tests, flags; then every open item with a one-line disposition. Commit on main. Return branch "main" and worktreePath "${REPO}".`,
     { label: `docs:${A.docs.id}`, phase: 'Docs + critic', schema: RESULT, model: MODEL, effort: 'medium' })
@@ -252,8 +295,12 @@ Append a "Run" section to ${PLAN}: per phase merged?, tests, flags; then every o
 let critic = null
 if (A.critic !== false && !halted) {
   critic = await spawn(`FIRST read ${CONTROL_PATH}: if it has "windDown": true, return the single line 'wind-down' and nothing else.
-You are the completeness critic for a multi-agent run that executed phases ${[...SERIAL, ...PARALLEL].join(', ')} of ${PLAN}. Read the plan (every "Done" block and the "Run" section), every ${REPO}/${HANDOFF}/*.md, and git log --oneline -60. Answer briefly, as a prioritised list for the human: (1) plan items NOT implemented or NOT verified with a number/test/screenshot; (2) flags that are real defects vs noise — the 3–5 things to look at first; (3) snapshots updated without justification; (4) handoffs showing lost or confused context (contradictions, repeated work, retracted claims); (5) whether the docs tell the truth about what shipped. Do not modify files. Under 600 words.`,
+You are the completeness critic for a multi-agent run that executed phases ${[...SERIAL, ...PARALLEL].join(', ')} of ${PLAN}. Read the plan (every "Done" block and the "Run" section), every ${REPO}/${HANDOFF}/*.md, and git log --oneline -60. Answer briefly, as a prioritised list for the human: (1) plan items NOT implemented or NOT verified with a number/test/screenshot; (2) flags that are real defects vs noise — the 3–5 things to look at first; (3) snapshots updated without justification; (4) handoffs showing lost or confused context (contradictions, repeated work, retracted claims); (5) whether the docs tell the truth about what shipped.
+${gate ? `DO NOT RUN THE TEST SUITE. It was run once, deliberately, by the shift gate on merged main, and this is its result — treat it as the run and read it before judging anything:
+${JSON.stringify(gate, null, 1)}
+Each phase was verified against a QUICK gate only (the suites it could plausibly break), by design: the full suite is the shift gate, not a per-phase obligation. A phase that did not run the full suite is following the contract, NOT cutting a corner — do not report it as an unverified claim.` : 'Do not run the test suite; judge from what the agents recorded.'}
+Do not modify files. Under 600 words.`,
     { label: 'critic', phase: 'Docs + critic', effort: 'high' })
 }
 
-return { paused: false, merged: state.merged, results, docs, critic, continueWith: remaining.length ? continueWith : null }
+return { paused: false, merged: state.merged, results, gate, docs, critic, continueWith: remaining.length ? continueWith : null }

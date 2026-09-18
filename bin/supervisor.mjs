@@ -53,7 +53,8 @@ const MODEL = process.env.SUPERVISOR_MODEL || C.model || 'opus'
 const MAX_UTIL = Number(process.env.SUPERVISOR_MAX_UTIL || C.maxUtil || 0.9)
 const MAX_UNREADABLE = C.maxUnreadable || 3
 const WORKFLOW = C.workflowName || 'shift'
-const TESTS = C.tests || []
+const TESTS = C.tests || []                    // the quick gate, per phase
+const FULL_TESTS = C.fullTests || null          // the shift gate, once on merged main (null = same as tests)
 const TESTS_TAKE_BASE = C.testsTakeBase !== false
 const VISUAL = C.visualUrl || '/'
 const CONTEXT = C.contextFiles || []
@@ -85,7 +86,7 @@ When you are done, print — as the LAST thing in your reply — one fenced bloc
 
 const baseArgs = () => ({
   repo: REPO, planFile: PLAN, contextFiles: CONTEXT, handoffDir: C.handoffDir || 'handoff', mainBase: MAIN_BASE,
-  tests: TESTS, testsTakeBase: TESTS_TAKE_BASE, visualUrl: VISUAL, model: MODEL, critic: true,
+  tests: TESTS, ...(FULL_TESTS ? { fullTests: FULL_TESTS } : {}), testsTakeBase: TESTS_TAKE_BASE, visualUrl: VISUAL, model: MODEL, critic: true,
   docs: C.docs || { id: 'docs', brief: 'update the project docs for what shipped' },
 })
 

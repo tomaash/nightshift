@@ -100,12 +100,46 @@ contract and a worked example.
 |---|---|
 | `planFile`, `contextFiles` | the plan and any files every agent must read first |
 | `devServer.command` / `.port` | how to start your dev server; nightshift keeps it up on `main` for the merge agent; worktree agents start their own on `portBase+` |
-| `tests`, `testsTakeBase` | the suites the merge agent runs on `main`; `--base http://localhost:<port>` is appended when `testsTakeBase` |
+| `tests` | the QUICK gate — the suites each phase runs (implementer, reviewer, merge-and-verify). Narrow it to what a phase can plausibly break plus whatever is cheap and structural |
+| `fullTests` | the SHIFT gate — the full suite, run ONCE on merged `main` after the last merge, as its own step. Omit and it equals `tests`; `[]` switches the gate off |
+| `testsTakeBase` | `--base http://localhost:<port>` is appended to every test command of both tiers |
 | `buildCommand` | used to detect an unbuildable `main` (triggers a repair shift) |
 | `visualUrl` | the page every phase must look at before it is done |
 | `docs` | an optional docs phase run on `main` after each batch |
 | `model`, `maxUtil`, `groomBatch`, `maxUnreadable` | Opus by default; sleep threshold; phases per groom; hard-blocker threshold |
 | `workflowName` | `shift` (copied) or `nightshift:shift` (plugin) — `install` sets it and bakes it into the loop's seed prompt |
+
+## Two test tiers: the quick gate and the shift gate
+
+A full suite that boots a browser is the dominant cost of a shift, and the old
+design ran it everywhere: once or twice per implementer, again at every merge,
+again in the docs phase, and again whenever the critic decided to check. A
+three-phase shift could spend three hours waiting on eight runs of the same
+twenty-minute suite to verify changes to one file.
+
+So there are two tiers:
+
+- **`tests` — the quick gate.** Run by the implementer in its worktree, by the
+  reviewer if it wants to check, and by the merge agent on `main` after each
+  merge. It should be the suites the phase can plausibly break, plus whatever is
+  cheap and catches structural damage. A phase can narrow it further with
+  `phases[id].tests`.
+- **`fullTests` — the shift gate.** Run ONCE, on merged `main`, after the last
+  merge — as its own workflow step, so it happens even when there is no docs
+  phase, and returns a structured result rather than prose an agent can skip.
+  The docs phase is handed that result and told to quote it; the critic is told
+  not to re-run the suite and that a phase which only ran its quick gate is
+  following the contract, not cutting a corner.
+
+The trade is deliberate: a break outside a phase's declared blast radius surfaces
+at the end of the shift rather than at the merge that caused it. `git log --merges`
+makes attribution a few minutes' work, and a cheap structural assertion (for
+example "this phase changed no bytes under `src/`") is usually what licenses the
+narrow gate in the first place.
+
+If the shift pauses (wind-down, dying agents) the gate does not run, and the
+paused report says so in `gateNote`: those merges are on `main` ungated until the
+next shift's gate covers them.
 
 ## One shift (the `shift` workflow)
 

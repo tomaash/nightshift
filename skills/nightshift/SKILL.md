@@ -25,8 +25,10 @@ need: it runs until the backlog is dry and every merge is a commit.
    skill, gitignores the runtime files and checks prerequisites (claude, git,
    tmux, jq, Workflow tool headless, usage signal, project trusted).
 2. If the plan was not detected, or the user named one, set `planFile`. Then
-   fill in from the repo what the template guesses: `tests` (package.json
-   scripts / the plan's Verification sections), `devServer.command` + `port`,
+   fill in from the repo what the template guesses: `tests` (the QUICK gate —
+   the cheap/structural suites each phase runs; narrow it, it runs per phase)
+   and `fullTests` (the SHIFT gate — the whole suite, e.g. `npm test`, run once
+   on merged main at the end of the shift), `devServer.command` + `port`,
    `buildCommand`, `visualUrl` (the page the plan tells agents to look at),
    `contextFiles` (docs every agent must read first). Show the final config.
 3. Open the plan. It must have `## Phase <id> — <title>` sections with
