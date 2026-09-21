@@ -25,8 +25,17 @@ MODEL=$(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CFG" 2
 HANDOFF="$REPO/$HANDOFF"
 MAXUTIL=$(sed -n 's/.*"maxUtil"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p' "$CFG" 2>/dev/null | head -n 1)
 : "${MAXUTIL:=0.9}"
+# Per-window overrides (a five-hour window resets often and costs little to wind down early; a seven-day window
+# does not, so winding a shift down at the same flat percentage of it throws away real headroom for no reason).
+# Falls back to MAXUTIL, unset, when the config carries no override — usage.mjs then falls back to MAXUTIL itself.
+MAXUTIL_5H=$(sed -n 's/.*"maxUtilFiveHour"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p' "$CFG" 2>/dev/null | head -n 1)
+MAXUTIL_7D=$(sed -n 's/.*"maxUtilSevenDay"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p' "$CFG" 2>/dev/null | head -n 1)
 PROBE_MIN=$(sed -n 's/.*"probeMinutes"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$CFG" 2>/dev/null | head -n 1)
 : "${PROBE_MIN:=10}"
+# Built once, reused by both usage.mjs calls below; plain numbers only, so word-splitting is safe.
+MAX_ARGS="--max $MAXUTIL"
+[ -n "$MAXUTIL_5H" ] && MAX_ARGS="$MAX_ARGS --max-five_hour $MAXUTIL_5H"
+[ -n "$MAXUTIL_7D" ] && MAX_ARGS="$MAX_ARGS --max-seven_day $MAXUTIL_7D"
 SEED="${1:-$HERE/shift-seed.md}"
 [ -f "$SEED" ] || { echo "shift-loop: seed not found: $SEED" >&2; exit 1; }
 mkdir -p "$HANDOFF"
@@ -39,9 +48,9 @@ say "loop started in $REPO (seed $(basename "$SEED"), log $LOG)"
 # running shift winds down gracefully (agents commit + hand off at their next milestone, the workflow stops spawning).
 WATCHDOG_PID=
 if [ -f "$USAGE" ]; then
-  node "$USAGE" watch --max "$MAXUTIL" --every "$PROBE_MIN" --handoff "$HANDOFF" --repo "$REPO" >> "$HANDOFF/watchdog.log" 2>&1 &
+  node "$USAGE" watch $MAX_ARGS --every "$PROBE_MIN" --handoff "$HANDOFF" --repo "$REPO" >> "$HANDOFF/watchdog.log" 2>&1 &
   WATCHDOG_PID=$!
-  say "usage watchdog pid $WATCHDOG_PID (wind down at maxUtil=$MAXUTIL, probe every $PROBE_MIN min, log $HANDOFF/watchdog.log)"
+  say "usage watchdog pid $WATCHDOG_PID (wind down at $MAX_ARGS, probe every $PROBE_MIN min, log $HANDOFF/watchdog.log)"
 fi
 cleanup() { [ -n "$WATCHDOG_PID" ] && kill "$WATCHDOG_PID" 2>/dev/null; }
 trap 'cleanup; exit 0' INT TERM EXIT
@@ -52,7 +61,7 @@ while :; do
   # window's reset (+3 min), re-probes, and clears the windDown flag in CONTROL.json when it returns.
   if [ -f "$USAGE" ]; then
     say "checking usage before the session"
-    node "$USAGE" wait --max "$MAXUTIL" --control "$HANDOFF/CONTROL.json" --repo "$REPO" 2>&1 | while IFS= read -r l; do say "$l"; done
+    node "$USAGE" wait $MAX_ARGS --control "$HANDOFF/CONTROL.json" --repo "$REPO" 2>&1 | while IFS= read -r l; do say "$l"; done
     if [ -f "$HANDOFF/STOP" ]; then say "$HANDOFF/STOP present — not starting another session"; exit 0; fi
   fi
   rm -f "$HANDOFF/NEXT_SESSION"
