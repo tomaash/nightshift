@@ -135,7 +135,7 @@ const fullestWindow = (info) => {
   if (!w) return null
   return Object.entries(w).map(([name, v]) => ({ name, utilization: Number(v.utilization) || 0, resetsAt: Number(v.resetsAt) * 1000 })).sort((a, b) => b.utilization - a.utilization)[0]
 }
-const probeUsage = async () => (await runClaude('Reply with exactly: ok', 'haiku')).rateInfo
+const probeUsage = async () => (await runClaude('Nightshift radio check. Sound off if you read me. Reply with exactly: LOUD AND CLEAR', 'haiku')).rateInfo
 const msUntilWindowReset = (win) => (win && win.resetsAt > Date.now() ? win.resetsAt - Date.now() + 3 * 60 * 1000 : null)
 const msUntilReset = (resetText) => {
   const m = resetText && resetText.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)

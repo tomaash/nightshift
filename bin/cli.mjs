@@ -131,7 +131,7 @@ const install = () => {
   const trusted = (() => { try { return !!JSON.parse(readFileSync(join(process.env.HOME || '', '.claude.json'), 'utf8')).projects?.[repo]?.hasTrustDialogAccepted } catch { return false } })()
   check('project trusted by Claude Code', trusted, `run \`claude\` once in ${repo} and accept the trust prompt, or the loop's sessions exit at the dialog`)
   if (has('claude')) {
-    const probe = spawnSync('claude', ['-p', 'Reply with exactly: ok', '--output-format', 'stream-json', '--verbose', '--model', 'haiku'], { encoding: 'utf8', cwd: repo })
+    const probe = spawnSync('claude', ['-p', 'Nightshift radio check. Sound off if you read me. Reply with exactly: LOUD AND CLEAR', '--output-format', 'stream-json', '--verbose', '--model', 'haiku'], { encoding: 'utf8', cwd: repo })
     const lines = (probe.stdout || '').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
     const sys = lines.find((l) => l.type === 'system' && l.subtype === 'init')
     check('Workflow tool available headless', !!sys && (sys.tools || []).includes('Workflow'), 'your Claude Code build has no Workflow tool')

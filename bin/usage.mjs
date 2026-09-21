@@ -20,7 +20,7 @@
  * THAT one throws away real headroom for no reason. `--max-<window name>` overrides `--max` for that window only;
  * `--max` alone (the old, single-threshold behaviour) still works and applies to every window that has no override.
  *
- * The probe is one `claude -p` haiku call ("Reply with exactly: ok"); the stream carries `rate_limit_event` records with
+ * The probe is one `claude -p` haiku call ("Nightshift radio check … Reply with exactly: LOUD AND CLEAR" — so it is legible as a READINESS PROBE in a session list, not mistaken for a stray test prompt); the stream carries `rate_limit_event` records with
  * per-window utilisation and reset time (five_hour, seven_day). Cost: negligible. A probe that returns no rate info
  * (offline, CLI change) is reported as such and never treated as "usage is fine".
  *
@@ -45,7 +45,7 @@ export const probe = () => new Promise((res) => {
   const done = (v) => { if (settled) return; settled = true; clearTimeout(hardTimer); res(v) }
   let child
   try {
-    child = spawn('claude', ['-p', 'Reply with exactly: ok', '--output-format', 'stream-json', '--verbose', '--model', 'haiku'], { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] })
+    child = spawn('claude', ['-p', 'Nightshift radio check. Sound off if you read me. Reply with exactly: LOUD AND CLEAR', '--output-format', 'stream-json', '--verbose', '--model', 'haiku'], { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] })
   } catch (e) { return done({ info: null, stderr: `spawn threw: ${e && e.message}` }) }
   let out = '', info = null, err = ''
   child.stdout.on('data', (d) => {
