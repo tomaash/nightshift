@@ -9,6 +9,9 @@ HANDOFF=$(sed -n 's/.*"handoffDir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "
 : "${HANDOFF:=handoff}"
 MARK="$REPO/$HANDOFF/NEXT_SESSION"
 [ -f "$MARK" ] || exit 0
+# A headless `claude -p` run in this project (a usage probe, a script) must not consume the marker: it would end
+# itself, not the shift session, and the shift session would then never end.
+case " $(ps -o args= -p $PPID 2>/dev/null) " in *" -p "*) exit 0 ;; esac
 rm -f "$MARK"
 # Walk up from this hook to the claude process that owns the session.
 p=$PPID

@@ -1,12 +1,12 @@
 {
-  "//": "Merged into <project>/.claude/settings.json by `nightshift install`. SessionStart injects and deletes handoff.txt; Stop ends the session when <handoffDir>/NEXT_SESSION exists so shift-loop.sh starts the next one.",
+  "//": "Merged into <project>/.claude/settings.json by `nightshift install`. SessionStart injects and deletes handoff.txt, except in a headless `claude -p` session (a usage probe or script must not consume the briefing); Stop ends the session when <handoffDir>/NEXT_SESSION exists so shift-loop.sh starts the next one.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/handoff.txt\"; if [ -f \"$f\" ]; then jq -n --rawfile c \"$f\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:(\"# handoff.txt (auto-injected; the file has been deleted)\\n\\n\"+$c)}}' && rm \"$f\"; fi",
+            "command": "case \" $(ps -o args= -p $PPID) \" in *\" -p \"*) exit 0;; esac; f=\"${CLAUDE_PROJECT_DIR:-.}/handoff.txt\"; if [ -f \"$f\" ]; then jq -n --rawfile c \"$f\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:(\"# handoff.txt (auto-injected; the file has been deleted)\\n\\n\"+$c)}}' && rm \"$f\"; fi",
             "statusMessage": "Injecting handoff.txt"
           }
         ]

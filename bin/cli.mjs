@@ -99,17 +99,24 @@ const install = () => {
   const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {}
   settings.hooks ||= {}
   const want = JSON.parse(readFileSync(join(HERE, 'templates/hooks.json'), 'utf8')).hooks
-  const added = []
+  const added = [], updated = []
   for (const [event, entries] of Object.entries(want)) {
     settings.hooks[event] ||= []
     for (const entry of entries) {
       const cmds = entry.hooks.map((h) => h.command)
       const present = settings.hooks[event].some((e) => (e.hooks || []).some((h) => cmds.includes(h.command)))
-      if (!present) { settings.hooks[event].push(entry); added.push(event) }
+      if (present) continue
+      // An older install's hook carries the same statusMessage: replace its command, never add a second copy beside it.
+      const msgs = entry.hooks.map((h) => h.statusMessage)
+      const old = settings.hooks[event].flatMap((e) => e.hooks || []).find((h) => msgs.includes(h.statusMessage))
+      if (old) { old.command = entry.hooks.find((h) => h.statusMessage === old.statusMessage).command; updated.push(event) }
+      else { settings.hooks[event].push(entry); added.push(event) }
     }
   }
-  if (added.length) { writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n'); out('hooks', `added ${added.join(' + ')} to ${settingsPath}`) }
-  else out('hooks', `SessionStart + Stop already in ${settingsPath}`)
+  if (added.length || updated.length) {
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n')
+    out('hooks', [added.length && `added ${added.join(' + ')}`, updated.length && `updated ${updated.join(' + ')}`].filter(Boolean).join(', ') + ` in ${settingsPath}`)
+  } else out('hooks', `SessionStart + Stop already in ${settingsPath}`)
   const skillDst = join(repo, '.claude/skills/handoff/SKILL.md')
   if (existsSync(skillDst)) out('skill', `kept ${skillDst}`)
   else { mkdirSync(dirname(skillDst), { recursive: true }); copyFileSync(join(HERE, 'templates/skills/handoff/SKILL.md'), skillDst); out('skill', `/handoff copied to ${skillDst}`) }
